@@ -5,50 +5,53 @@ app = Flask(__name__)
 
 @app.route('/discount', methods=['POST'])
 def discount():
-    # Берём сырое тело запроса как текст
-    body = request.get_data(as_text=True) or ""
-# Если прилетело Telegram‑обновление, достаём текст сообщения
-    payload = request.get_json(silent=True) or {}
-    text = body
-    if isinstance(payload, dict):
-        message = payload.get("message") or {}
-        callback_query = payload.get("callback_query") or {}
+    # 1. Пытаемся прочитать JSON вида {"text": "..."}
+    data = request.get_json(silent=True) or {}
 
-        if isinstance(message, dict) and isinstance(message.get("text"), str):
-            text = message["text"]
-        elif isinstance(callback_query, dict):
-            if isinstance(callback_query.get("data"), str):
-                text = callback_query["data"]
-            elif isinstance(callback_query.get("message"), dict) and isinstance(
-                callback_query["message"].get("text"), str
-            ):
-                text = callback_query["message"]["text"]
-        elif isinstance(payload.get("text"), str):
-            text = payload["text"]
+    if isinstance(data, dict) and "text" in data:
+        text = str(data["text"])
+    else:
+        # Если почему-то не JSON — берём сырое тело как текст
+        text = request.get_data(as_text=True) or ""
 
-    # Нормализуем возможные разделители групп разрядов: пробелы, неразрывные пробелы и узкие пробелы
+    # 2. Убираем пробелы и экзотические пробелы (из браузеров/телеги)
     normalized = (
         text.replace(" ", "")
-        .replace("\u00a0", "")  # nbsp
-        .replace("\u202f", "")  # narrow nbsp, часто приходит из Telegram
+            .replace("\u00a0", "")   # обычный неразрывный пробел
+            .replace("\u202f", "")   # узкий неразрывный пробел
     )
 
-    # Пытаемся найти первое число в тексте (1492, 1492.50, 1492,50)
+    # 3. Ищем первое число (1492, 1492.50, 1492,50)
     match = re.search(r'\d+(?:[.,]\d+)?', normalized)
     if not match:
-        # Ничего не нашли — но НЕ падаем, возвращаем 200 с диагностикой
         return jsonify({
             "error": "no_number_found",
-            "body": body,
-            "new_price": None
+            "body": text,
+            "price": None,
+            "new_price": None,
+            "reply": "Я не нашёл число в сообщении. Напишите, пожалуйста, цену цифрами 🙂"
         }), 200
 
+    # 4. Конвертируем найденное число в float
     price_str = match.group(0).replace(",", ".")
     price = float(price_str)
+
+    # 5. Считаем цену с 20% скидкой
+    new_price = round(price * 0.8)
+
+    # 6. Готовим текст, который бот покажет пользователю
+    reply = (
+        f"Готово! 🎉\n\n"
+        f"Цена без скидки: {int(price)} ₽\n"
+        f"Цена со скидкой 20%: {new_price} ₽"
+    )
+
     return jsonify({
         "price": price,
-        "new_price": new_price
+        "new_price": new_price,
+        "reply": reply
     }), 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
